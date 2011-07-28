@@ -168,11 +168,6 @@ __END__
 
 =encoding utf-8
 
-=for stopwords
-API AnyEvent
-
-=back
-
 =head1 NAME
 
 AnyEvent::Gnip::Stream - Receive Gnip Power Track streaming API in an event loop
