@@ -83,6 +83,8 @@ Callback to execute when an error occurs.
 
 Set this param to TRUE if you don't want to deserialize json input from the stream.
 
+=back
+
 =head1 NOTES
 
 The API uses the HTTPS protocol. For this, you need to install the L<Net::SSLeay> module.
