@@ -171,8 +171,7 @@ __END__
 =for stopwords
 API AnyEvent
 
-=for test_synopsis
-my($user, $password, @following_ids, $consumer_key, $consumer_secret, $token, $token_secret);
+=back
 
 =head1 NAME
 
