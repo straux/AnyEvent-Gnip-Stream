@@ -31,7 +31,7 @@ my $listener = AnyEvent::Gnip::Stream->new(
         $done->send;
     },
     on_connect    => sub {
-        print "Stream started!\n";  
+        print "Stream started!\n";
     },
     on_eof        => sub {
         warn "EOF\n";

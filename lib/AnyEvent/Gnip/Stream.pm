@@ -65,7 +65,25 @@ sub new {
                 $on_keepalive->();
             }
         };
+        my $read_chunk;
+        $read_chunk = sub {
+            my ( $handle, $line, $message ) = @_;
 
+            $message ||= '';
+            $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
+            $handle->push_read( line => sub {
+                my ($handle, $chunk) = @_;
+                $message .= $chunk;
+                $handle->push_read(line => sub {
+                    my ($handle, $chunk) = @_;
+                    if(length $chunk) {
+                        $read_chunk->( $handle, $chunk, $message );
+                    } else {
+                        $on_json_message->($message);
+                    }
+                });
+            });
+        };
         $set_timeout->();
 
         my $cookie = {};
@@ -109,20 +127,7 @@ sub new {
                         return unless $handle;
 
                         my $chunk_reader = sub {
-                            my ($handle, $line) = @_;
-
-                            $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
-                            my $len = hex $1;
-
-                            $handle->push_read(chunk => $len, sub {
-                                my ($handle, $chunk) = @_;
-
-                                $handle->push_read(line => sub {
-                                    length $_[1] and die 'bad chunk (missing last empty line)';
-                                });
-
-                                $on_json_message->($chunk);
-                            });
+                            $read_chunk->( @_ );
                         };
                         my $line_reader = sub {
                             my ($handle, $line) = @_;
