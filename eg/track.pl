@@ -24,7 +24,7 @@ my $listener = AnyEvent::Gnip::Stream->new(
     collector_id  => $conf->{collector_id},
     on_tweet      => sub {
         my $tweet = shift;
-        print $tweet->{actor}->{preferredUsername}.": ".$tweet->{body}."\n";
+        print $tweet->{actor}->{preferredUsername}." > ".$tweet->{body}."\n";
     },
     on_error      => sub {
         warn shift."\n";
@@ -37,6 +37,7 @@ my $listener = AnyEvent::Gnip::Stream->new(
         warn "EOF\n";
         $done->send;
     },
+    timeout       => 60,
 );
 $done->recv;
 
