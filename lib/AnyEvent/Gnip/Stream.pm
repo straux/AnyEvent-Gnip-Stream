@@ -65,25 +65,6 @@ sub new {
                 $on_keepalive->();
             }
         };
-        my $read_chunk;
-        $read_chunk = sub {
-            my ( $handle, $line, $message ) = @_;
-
-            $message ||= '';
-            $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
-            $handle->push_read( line => sub {
-                my ($handle, $chunk) = @_;
-                $message .= $chunk;
-                $handle->push_read(line => sub {
-                    my ($handle, $chunk) = @_;
-                    if(length $chunk) {
-                        $read_chunk->( $handle, $chunk, $message );
-                    } else {
-                        $on_json_message->($message);
-                    }
-                });
-            });
-        };
         $set_timeout->();
 
         my $cookie = {};
@@ -126,8 +107,24 @@ sub new {
                         my ($handle, $headers) = @_;
                         return unless $handle;
 
-                        my $chunk_reader = sub {
-                            $read_chunk->( @_ );
+                        my $chunk_reader;
+                        $chunk_reader = sub {
+                            my ( $handle, $line, $message ) = @_;
+
+                            $message ||= '';
+                            $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
+                            $handle->push_read(line => sub {
+                                my ($handle, $chunk) = @_;
+                                $message .= $chunk;
+                                $handle->push_read(line => sub {
+                                    my ($handle, $chunk) = @_;
+                                    if(length $chunk) {
+                                        $chunk_reader->( $handle, $chunk, $message );
+                                    } else {
+                                        $on_json_message->($message);
+                                    }
+                                });
+                            });
                         };
                         my $line_reader = sub {
                             my ($handle, $line) = @_;
@@ -158,7 +155,6 @@ sub new {
                         $self->{guard} = AnyEvent::Util::guard {
                             $handle->destroy if $handle;
                         };
-
                         $on_connect->();
                     }
                 );
