@@ -6,22 +6,21 @@ use warnings;
 use AnyEvent::Gnip::Stream;
 use YAML::XS qw( LoadFile Dump );
 
-# YAML conf file:
+# YAML conf file model:
 #---
-#user: gnip_user
-#password: gnip_password
-#box_name: gnip_box_name
-#collector_id: 1
+#gnip:
+#  user: gnip_user
+#  password: gnip_password
+#  stream_url: stream_url
 
-my ( $conf ) = @ARGV;
+my $conf = shift or die "file ?\n";
 $conf = LoadFile( $conf )->{gnip};
 
 my $done = AE::cv;
 my $listener = AnyEvent::Gnip::Stream->new(
-    username      => $conf->{user},
+    user          => $conf->{user},
     password      => $conf->{password},
-    gnip_box_name => $conf->{box_name},
-    collector_id  => $conf->{collector_id},
+    stream_url    => $conf->{stream_url},
     on_tweet      => sub {
         my $tweet = shift;
         print $tweet->{actor}->{preferredUsername}." > ".$tweet->{body}."\n";
@@ -37,6 +36,7 @@ my $listener = AnyEvent::Gnip::Stream->new(
         warn "EOF\n";
         $done->send;
     },
+    compression   => 0,
     timeout       => 60,
 );
 $done->recv;

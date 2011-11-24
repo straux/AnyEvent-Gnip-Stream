@@ -11,22 +11,21 @@ AnyEvent::Gnip::Stream - Receive Gnip Power Track streaming API in an event loop
     # receive updates from Gnip Power Track
     my $done = AE::cv;
     my $listener = AnyEvent::Gnip::Stream->new(
-        username      => $user,
-        password      => $password,
-        gnip_box_name => $gnip_box_name,
-        collector_id  => $collector_id,
-        on_tweet      => sub {
+        user     => $user,
+        password    => $password,
+        stream_url  => $stream_url,
+        on_tweet    => sub {
             my $tweet = shift;
             print $tweet->{actor}->{preferredUsername}.": ".$tweet->{body}."\n";
         },
-        on_error      => sub {
+        on_error    => sub {
             warn shift."\n";
             $done->send;
         },
-        on_connect    => sub {
+        on_connect  => sub {
             print "Stream started!\n";
         },
-        on_eof        => sub {
+        on_eof      => sub {
             warn "EOF\n";
             $done->send;
         },
@@ -51,13 +50,13 @@ See L<eg/track.pl> for more client code example.
 
 =over 4
 
-=item B<username> B<password>
+=item B<user> B<password>
 
 These arguments are used for basic authentication.
 
-=item B<gnip_box_name> B<collector_id>
+=item B<stream_url>
 
-These arguments are used to define the Gnip collector to link to.
+URL of the Gnip collector to link to.
 
 =item B<timeout>
 
@@ -105,4 +104,3 @@ it under the same terms as Perl itself.
 L<AnyEvent::Twitter::Stream>
 
 =cut
-

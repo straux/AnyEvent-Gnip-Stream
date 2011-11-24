@@ -2,7 +2,7 @@ package AnyEvent::Gnip::Stream;
 
 use strict;
 use 5.008_001;
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use AnyEvent::HTTP;
 use AnyEvent::Util;
@@ -10,19 +10,16 @@ use MIME::Base64;
 use URI;
 use URI::Escape;
 
-our $STREAMING_SERVER  = 'gnip.com';
-our $PROTOCOL          = 'https';
-our $REQ_METHOD        = 'GET';
+our $REQ_METHOD = 'GET';
 
 sub new {
     my $class = shift;
     my %args  = @_;
 
     # Stream params
-    my $username        = delete $args{username};
-    my $password        = delete $args{password};
-    my $gnip_box_name   = delete $args{gnip_box_name};
-    my $collector_id    = delete $args{collector_id};
+    my $user    = delete $args{user};
+    my $password   = delete $args{password};
+    my $stream_url = delete $args{stream_url};
 
     # callbacks
     my $on_connect      = delete $args{on_connect} || sub { };
@@ -38,10 +35,16 @@ sub new {
         $decode_json = 1;
     }
 
-    my $uri = URI->new("$PROTOCOL://$gnip_box_name.$STREAMING_SERVER/data_collectors/$collector_id/track.json");
+    my $compressed;
+    if (delete $args{compression}) {
+        use IO::Uncompress::Gunzip qw( gunzip $GunzipError );
+        $compressed = 1;
+    }
+
+    my $uri = URI->new($stream_url);
 
     my $request_method = $REQ_METHOD;
-    my $auth  = "Basic ".MIME::Base64::encode("$username:$password", '');
+    my $auth  = "Basic ".MIME::Base64::encode("$user:$password", '');
 
     my $self = bless {}, $class;
 
@@ -52,10 +55,19 @@ sub new {
             ? sub { $self->{timeout} = AE::timer($timeout, 0, sub { $on_error->('timeout') }) }
             : sub {};
 
+        my $unzip = sub {
+            my $in = shift;
+            my $out;
+            gunzip( \$in => \$out ) or die "gunzip error: $GunzipError\n";
+            $out;
+        };
+
+
         my $json = JSON::XS->new->utf8(0);
         my $on_json_message = sub {
             my ($message) = @_;
 
+            $message = $unzip->( $message ) if $compressed;
             $set_timeout->();
             if ($message !~ /^\s*$/) {
                 my $tweet = $decode_json ? $json->decode($message) : $message;
@@ -67,97 +79,79 @@ sub new {
         };
         $set_timeout->();
 
+        my %head = ();
+        $head{'Accept-Encoding'} = 'gzip' if $compressed;
         my $cookie = {};
         $self->{connection_guard} = http_request(
             $request_method, $uri,
             headers => {
                 Authorization => $auth,
+                %head,
             },
             cookie_jar => $cookie,
             on_header => sub {
                 my($headers) = @_;
-                if ($headers->{Status} ne '302') {
+                if ($headers->{Status} ne '200') {
                     $on_error->("$headers->{Status}: $headers->{Reason}");
                     return;
                 }
                 return 1;
             },
-            recurse => 0,
+            want_body_handle => 1,
+            persistent => 1,
             sub {
-                my ( $data, $header ) = @_;
-                my $location = $header->{location};
+                my ($handle, $headers) = @_;
+                return unless $handle;
 
-                http_request(
-                    $request_method, $location,
-                    headers => {
-                        Authorization => $auth,
-                    },
-                    cookie_jar => $cookie,
-                    on_header => sub {
-                        my($headers) = @_;
-                        if ($headers->{Status} ne '200') {
-                            $on_error->("$headers->{Status}: $headers->{Reason}");
-                            return;
-                        }
-                        return 1;
-                    },
-                    want_body_handle => 1,
-                    persistent => 1,
-                    sub {
-                        my ($handle, $headers) = @_;
-                        return unless $handle;
+                my $chunk_reader;
+                $chunk_reader = sub {
+                    my ( $handle, $line, $message ) = @_;
 
-                        my $chunk_reader;
-                        $chunk_reader = sub {
-                            my ( $handle, $line, $message ) = @_;
-
-                            $message ||= '';
-                            $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
-                            $handle->push_read(line => sub {
-                                my ($handle, $chunk) = @_;
-                                $message .= $chunk;
-                                $handle->push_read(line => sub {
-                                    my ($handle, $chunk) = @_;
-                                    if(length $chunk) {
-                                        $chunk_reader->( $handle, $chunk, $message );
-                                    } else {
-                                        $on_json_message->($message);
-                                    }
-                                });
-                            });
-                        };
-                        my $line_reader = sub {
-                            my ($handle, $line) = @_;
-                            $on_json_message->($line);
-                        };
-
-                        $handle->on_error(sub {
-                            undef $handle;
-                            $on_error->( $_[2] );
-                        } );
-                        $handle->on_eof(sub {
-                            undef $handle;
-                            $on_eof->(@_);
+                    $message ||= '';
+                    $line =~ /^([0-9a-fA-F]+)/ or die 'bad chunk (incorrect length)';
+                    $handle->push_read( line => sub {
+                        my ($handle, $chunk) = @_;
+                        $message .= $chunk;
+                        $handle->push_read(line => sub {
+                            my ($handle, $chunk) = @_;
+                            if(length $chunk) {
+                                $chunk_reader->( $handle, $chunk, $message );
+                            } else {
+                                $on_json_message->($message);
+                            }
                         });
+                    });
+                };
+                my $line_reader = sub {
+                    my ($handle, $line) = @_;
+                    $on_json_message->($line);
+                };
 
-                        if (($headers->{'transfer-encoding'} || '') =~ /\bchunked\b/i) {
-                            $handle->on_read(sub {
-                                my ($handle) = @_;
-                                $handle->push_read(line => $chunk_reader);
-                            });
-                        } else {
-                            $handle->on_read(sub {
-                                my ($handle) = @_;
-                                $handle->push_read(line => $line_reader);
-                            });
-                        }
+                $handle->on_error(sub {
+                    undef $handle;
+                    $on_error->( $_[2] );
+                } );
+                $handle->on_eof(sub {
+                    undef $handle;
+                    $on_eof->(@_);
+                });
 
-                        $self->{guard} = AnyEvent::Util::guard {
-                            $handle->destroy if $handle;
-                        };
-                        $on_connect->();
-                    }
-                );
+                if (($headers->{'transfer-encoding'} || '') =~ /\bchunked\b/i) {
+                    $handle->on_read(sub {
+                        my ($handle) = @_;
+                        $handle->push_read(line => $chunk_reader);
+                    });
+                } else {
+                    $handle->on_read(sub {
+                        my ($handle) = @_;
+                        $handle->push_read(line => $line_reader);
+                    });
+                }
+
+                $self->{guard} = AnyEvent::Util::guard {
+                    $handle->destroy if $handle;
+                };
+                $on_connect->();
             }
         );
     }
@@ -180,22 +174,21 @@ AnyEvent::Gnip::Stream - Receive Gnip Power Track streaming API in an event loop
     # receive updates from Gnip Power Track
     my $done = AE::cv;
     my $listener = AnyEvent::Gnip::Stream->new(
-        username      => $user,
-        password      => $password,
-        gnip_box_name => $gnip_box_name,
-        collector_id  => $collector_id,
-        on_tweet      => sub {
+        user     => $user,
+        password    => $password,
+        stream_url  => $stream_url,
+        on_tweet    => sub {
             my $tweet = shift;
             print $tweet->{actor}->{preferredUsername}.": ".$tweet->{body}."\n";
         },
-        on_error      => sub {
+        on_error    => sub {
             warn shift."\n";
             $done->send;
         },
-        on_connect    => sub {
+        on_connect  => sub {
             print "Stream started!\n";
         },
-        on_eof        => sub {
+        on_eof      => sub {
             warn "EOF\n";
             $done->send;
         },
@@ -220,13 +213,13 @@ See L<eg/track.pl> for more client code example.
 
 =over 4
 
-=item B<username> B<password>
+=item B<user> B<password>
 
 These arguments are used for basic authentication.
 
-=item B<gnip_box_name> B<collector_id>
+=item B<stream_url>
 
-These arguments are used to define the Gnip collector to link to.
+URL of the Gnip collector to link to.
 
 =item B<timeout>
 
